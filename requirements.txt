@@ -1,0 +1,8 @@
+fancyimpute==0.7.0
+lightgbm==4.6.0
+matplotlib==3.8.1
+numpy==2.3.1
+pandas==2.3.0
+scikit_learn==1.7.0
+seaborn==0.13.2
+urielplus==1.1
