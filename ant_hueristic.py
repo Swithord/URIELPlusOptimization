@@ -1,7 +1,7 @@
-NUM_ANTS = 100                   # number of ants in the colony (i hate ants!!!!)
+NUM_ANTS = 2                   # number of ants in the colony (i hate ants!!!!)
 EVAPORATION = 0.2               # how much pheromone evaporates each iteration
-ITERATIONS = 700              # number of iterations to run the algorithm
-FEATURES_PER_ITERATION = 200    # number of features to select per iteration
+ITERATIONS = 1              # number of iterations to run the algorithm
+FEATURES_PER_ITERATION = 1    # number of features to select per iteration
 BETA = 0.5                        # weight given for similarity vs pheromone (beta > 1, the heuristic dominates)
 EXPLOITATION_RATE = 0.8         # how much to exploit vs explore
 EPSILON = 0.00001               # Stop division by zero errors
@@ -137,7 +137,7 @@ def compute_pheromones(data: np.ndarray, selected_features: set) -> float:
     df_imputed = pd.DataFrame(imputed_values, columns=uriel.get_typological_features_array()[np.array(list(selected_features))], index=uriel.get_typological_languages_array())
     # df_imputed.to_csv(f'selection_result/imputed_ant_{SIMILARITY_FUNCTION}_{FEATURES_PER_ITERATION}.csv')
 
-    baseline = pd.read_csv('data/results/baseline_results_imputed.csv').to_numpy().squeeze().shape
+    baseline = pd.read_csv('data/baseline_results_imputed.csv').to_numpy().squeeze().shape
 
     dep_df, el_df, mt_df, pos_df = replace_in_memory(df_imputed)
     dep_ndcg = dep_in_memory(dep_df, FEATURE_TYPES)
