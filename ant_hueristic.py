@@ -264,11 +264,11 @@ ranked_features, pheromones = select_features_ACO(data, weights)
 for num_features in range(100, 701, 100):
     filtered_data: pd.Series = df.iloc[:, ranked_features[:num_features]]
 
-    df_np = df.to_numpy()
+    df_np = filtered_data.to_numpy()
     df_np = np.where(df_np == -1, np.nan, df_np)
 
     imputer = SoftImpute(max_iters=400,  max_value=1, min_value=0, init_fill_method="mean")
     imputed_values = imputer.fit_transform(df_np)
 
-    df_imputed = pd.DataFrame(imputed_values, columns=df.columns, index=df.index)
+    df_imputed = pd.DataFrame(imputed_values, columns=filtered_data.columns, index=filtered_data.index)
     df_imputed.to_csv(f'langrank/selection_result/imputed_ant_hueristic_{SIMILARITY_FUNCTION}_{num_features}.csv')
