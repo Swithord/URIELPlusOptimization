@@ -1,11 +1,13 @@
-NUM_ANTS = 2                   # number of ants in the colony (i hate ants!!!!)
+NUM_ANTS = 10#25                   # number of ants in the colony (i hate ants!!!!)
 EVAPORATION = 0.2               # how much pheromone evaporates each iteration
-ITERATIONS = 1              # number of iterations to run the algorithm
-FEATURES_PER_ITERATION = 1    # number of features to select per iteration
-BETA = 0.5                        # weight given for similarity vs pheromone (beta > 1, the heuristic dominates)
+ITERATIONS = 50                 # number of iterations to run the algorithm
+FEATURES_PER_ITERATION = 20#200    # number of features to select per iteration
+BETA = 0.5                      # weight given for similarity vs pheromone (beta > 1, the heuristic dominates)
 EXPLOITATION_RATE = 0.8         # how much to exploit vs explore
 EPSILON = 0.00001               # Stop division by zero errors
 SIMILARITY_FUNCTION = 'phi'     # similarity function to use, 'phi' or 'mi' or 'linguistic'
+SAVE_PHEROMONES = True          # whether to save pheromone matrix after each iteration
+LOAD_PHEROMONES = False         # whether to load existing pheromone matrix to resume
 
 from urielplus import urielplus
 from sklearn.metrics import matthews_corrcoef, normalized_mutual_info_score
@@ -28,16 +30,23 @@ warnings.filterwarnings("ignore", category=FutureWarning, message="'force_all_fi
 # shut up LightGBM
 warnings.filterwarnings('ignore', category=UserWarning, module='lightgbm')
 
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
+
  
 # Initialization
+logger.info("Initializing URIELPlus and integrating databases...")
 uriel = urielplus.URIELPlus()
 uriel.integrate_databases()
 uriel.set_aggregation('U')
 uriel.aggregate()
+logger.info("Database integration complete!")
 
 
 # Collect aggregated and imputed data
 data: np.ndarray = np.squeeze(uriel.get_typological_data_array())
+logger.info(f"Data shape: {data.shape}")
  
 # Similarity Functions
 def phi_coefficient(x: np.ndarray, y: np.ndarray) -> float:
@@ -110,6 +119,17 @@ def construct_pheromone_matrix(data: np.ndarray) -> np.ndarray:
     - pheromones: array-like, shape (n_features,)
     """
     num_features = data.shape[1]
+    
+    # Try to load existing pheromones if requested
+    pheromone_file = f'pheromones_{SIMILARITY_FUNCTION}_{NUM_ANTS}_{FEATURES_PER_ITERATION}.npy'
+    if LOAD_PHEROMONES:
+        try:
+            pheromones = np.load(pheromone_file)
+            logger.info(f"Loaded existing pheromone matrix from {pheromone_file}")
+            return pheromones
+        except FileNotFoundError:
+            logger.info(f"No existing pheromone file found at {pheromone_file}, starting fresh")
+    
     pheromones = np.ones((num_features,))
     
     return pheromones
@@ -124,7 +144,7 @@ def compute_pheromones(data: np.ndarray, selected_features: set) -> float:
 
     Output
     ------
-    - loss: float, the loss value computed from the LangRank results
+    - reward: float, the % improvement computed from the LangRank results
     """
     FEATURE_TYPES = ['GENETIC','SYNTACTIC','FEATURAL','PHONOLOGICAL','INVENTORY','GEOGRAPHIC']
 
@@ -137,7 +157,7 @@ def compute_pheromones(data: np.ndarray, selected_features: set) -> float:
     df_imputed = pd.DataFrame(imputed_values, columns=uriel.get_typological_features_array()[np.array(list(selected_features))], index=uriel.get_typological_languages_array())
     # df_imputed.to_csv(f'selection_result/imputed_ant_{SIMILARITY_FUNCTION}_{FEATURES_PER_ITERATION}.csv')
 
-    baseline = pd.read_csv('data/baseline_results_imputed.csv').to_numpy().squeeze().shape
+    baseline = pd.read_csv('data/baseline_results_imputed.csv').to_numpy().squeeze()
 
     dep_df, el_df, mt_df, pos_df = replace_in_memory(df_imputed)
     dep_ndcg = dep_in_memory(dep_df, FEATURE_TYPES)
@@ -146,9 +166,9 @@ def compute_pheromones(data: np.ndarray, selected_features: set) -> float:
     pos_ndcg = pos_in_memory(pos_df, FEATURE_TYPES)
 
     results = np.array([dep_ndcg, el_ndcg, mt_ndcg, pos_ndcg])
-    loss: float = np.sum(-np.log(results / baseline))
+    reward: float = np.sum((results - baseline) / baseline)
 
-    return loss
+    return reward
  
 # Unsupervised Feature Selection based on Ant Colony Optimization (UFSACO)
 # Based on "An unsupervised feature selection algorithm based on ant colony optimization" (Tabakhi, 2014).
@@ -236,14 +256,18 @@ def select_features_ACO(data: np.ndarray, weights: np.ndarray) -> tuple[np.ndarr
                 ant.selected_features.add(feature)
 
         # Update pheromones
+        pheromones *= (1 - EVAPORATION)
         for ant in ants:
-            loss = compute_pheromones(data, ant.selected_features)
+            reward = compute_pheromones(data, ant.selected_features)
+            pheromones[np.array(sorted(ant.selected_features), dtype=int)] += max(0, reward)
 
-            # Only improve pheromones
-            pheromones *= (1 - EVAPORATION)
-            pheromones[np.array(sorted(ant.selected_features), dtype=int)] += max(0, loss)
-
-        logging.info(f"Iteration {iteration + 1}/{ITERATIONS}")
+        logger.info(f"Iteration {iteration + 1}/{ITERATIONS} - Best pheromone: {np.max(pheromones):.4f}")
+        
+        # Save pheromones after each iteration if requested
+        if SAVE_PHEROMONES:
+            pheromone_file = f'pheromones_{SIMILARITY_FUNCTION}_{NUM_ANTS}_{FEATURES_PER_ITERATION}.npy'
+            np.save(pheromone_file, pheromones)
+            logger.info(f"Saved pheromone matrix to {pheromone_file}")
 
     # Sort features by pheromone levels in descending order
     return np.argsort(pheromones)[::-1], np.sort(pheromones)[::-1]
@@ -257,11 +281,16 @@ df = pd.DataFrame(data, columns=feature_labels, index=languages)
 
 # Run ACO algorithm
 similarity_function = phi_coefficient if SIMILARITY_FUNCTION == 'phi' else mutual_information
+logger.info("Constructing weight matrix...")
 weights: np.ndarray = construct_weight_matrix(data, similarity_function)
+logger.info("Starting feature selection with ACO...")
 ranked_features, pheromones = select_features_ACO(data, weights)
+logger.info("ACO feature selection complete!")
 
 # Impute the selected features and save results
+logger.info("Starting imputation and saving results...")
 for num_features in range(100, 701, 100):
+    logger.info(f"Processing {num_features} features...")
     filtered_data: pd.Series = df.iloc[:, ranked_features[:num_features]]
 
     df_np = filtered_data.to_numpy()
@@ -271,4 +300,8 @@ for num_features in range(100, 701, 100):
     imputed_values = imputer.fit_transform(df_np)
 
     df_imputed = pd.DataFrame(imputed_values, columns=filtered_data.columns, index=filtered_data.index)
-    df_imputed.to_csv(f'langrank/selection_result/imputed_ant_hueristic_{SIMILARITY_FUNCTION}_{num_features}.csv')
+    output_file = f'selection_results/imputed_ant_hueristic_{num_features}.csv'
+    df_imputed.to_csv(output_file)
+    logger.info(f"Saved: {output_file}")
+
+logger.info("All processing complete!")
