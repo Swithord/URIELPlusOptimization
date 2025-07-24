@@ -300,15 +300,9 @@ for num_features in range(100, 701, 100):
 
     df_np = filtered_data.to_numpy()
     df_np = np.where(df_np == -1, np.nan, df_np)
-
-    if IMPUTATION:
-        logger.info("Imputing missing values...")
-        imputer = SoftImpute(max_iters=400,  max_value=1, min_value=0, init_fill_method="mean", verbose=False)
-        df_np = imputer.fit_transform(df_np)
-
+    
     df_final = pd.DataFrame(df_np, columns=filtered_data.columns, index=filtered_data.index)
-    output_file: str = f'selection_results/imputed_ant_hueristic_{num_features}.csv'
-    df_final.to_csv(output_file)
-    logger.info(f"Saved: {output_file}")
+    df_final.to_csv(f'selection_result/ant_{SIMILARITY_FUNCTION}_{num_features}.csv')
+    logger.info(f"Saved: {f'selection_result/ant_{SIMILARITY_FUNCTION}_{num_features}.csv'}")
 
 logger.info("All processing complete!")
