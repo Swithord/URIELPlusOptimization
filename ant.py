@@ -1,13 +1,14 @@
-NUM_ANTS = 10#25                   # number of ants in the colony (i hate ants!!!!)
+NUM_ANTS = 25                   # number of ants in the colony (i hate ants!!!!)
 EVAPORATION = 0.2               # how much pheromone evaporates each iteration
 ITERATIONS = 50                 # number of iterations to run the algorithm
-FEATURES_PER_ITERATION = 20#200    # number of features to select per iteration
+FEATURES_PER_ITERATION = 200    # number of features to select per iteration
 BETA = 0.5                      # weight given for similarity vs pheromone (beta > 1, the heuristic dominates)
 EXPLOITATION_RATE = 0.8         # how much to exploit vs explore
 EPSILON = 0.00001               # Stop division by zero errors
-SIMILARITY_FUNCTION = 'phi'     # similarity function to use, 'phi' or 'mi' or 'linguistic'
+SIMILARITY_FUNCTION = 'phi'     # similarity function to use, 'phi' or 'mi'
 SAVE_PHEROMONES = True          # whether to save pheromone matrix after each iteration
 LOAD_PHEROMONES = False         # whether to load existing pheromone matrix to resume
+from config import IMPUTATION   # whether to use imputed values
 
 from urielplus import urielplus
 from sklearn.metrics import matthews_corrcoef, normalized_mutual_info_score
@@ -30,6 +31,7 @@ warnings.filterwarnings("ignore", category=FutureWarning, message="'force_all_fi
 # shut up LightGBM
 warnings.filterwarnings('ignore', category=UserWarning, module='lightgbm')
 
+
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -44,7 +46,7 @@ uriel.aggregate()
 logger.info("Database integration complete!")
 
 
-# Collect aggregated and imputed data
+# Collect aggregated data
 data: np.ndarray = np.squeeze(uriel.get_typological_data_array())
 logger.info(f"Data shape: {data.shape}")
  
@@ -134,39 +136,41 @@ def construct_pheromone_matrix(data: np.ndarray) -> np.ndarray:
     
     return pheromones
 
-def compute_pheromones(data: np.ndarray, selected_features: set) -> float:
+def compute_pheromones(data: np.ndarray, selected_features: set[int]) -> float:
     """
     Compute the pheromones for a given subset of features evaluated on LangRank.
 
     Input
     -----
-    - subset: array-like, shape (n_samples, n_features)
+    - data: array-like, shape (n_samples, n_features), the full URIEL dataset before feature selection
+    - subset: set of feature indices that are selected
 
     Output
     ------
-    - reward: float, the % improvement computed from the LangRank results
+    - loss: float, the loss value computed from the LangRank results
     """
     FEATURE_TYPES = ['GENETIC','SYNTACTIC','FEATURAL','PHONOLOGICAL','INVENTORY','GEOGRAPHIC']
 
     subset: np.ndarray = data[:, list(selected_features)]
     subset = np.where(subset == -1, np.nan, subset)
 
-    imputer = SoftImpute(max_iters=400,  max_value=1, min_value=0, init_fill_method="mean", verbose=False)
-    imputed_values = imputer.fit_transform(subset)
+    if IMPUTATION:
+        imputer = SoftImpute(max_iters=400,  max_value=1, min_value=0, init_fill_method="mean", verbose=False)
+        imputed_values = imputer.fit_transform(subset)
 
-    df_imputed = pd.DataFrame(imputed_values, columns=uriel.get_typological_features_array()[np.array(list(selected_features))], index=uriel.get_typological_languages_array())
-    # df_imputed.to_csv(f'selection_result/imputed_ant_{SIMILARITY_FUNCTION}_{FEATURES_PER_ITERATION}.csv')
+        df = pd.DataFrame(imputed_values, columns=uriel.get_typological_features_array()[np.array(list(selected_features))], index=uriel.get_typological_languages_array())
+    else:
+        df = pd.DataFrame(subset, columns=uriel.get_typological_features_array()[np.array(list(selected_features))], index=uriel.get_typological_languages_array())
 
-    baseline = pd.read_csv('data/baseline_results_imputed.csv').to_numpy().squeeze()
+    # baseline = pd.read_csv('data/baseline_results_imputed.csv').to_numpy().squeeze()
 
-    dep_df, el_df, mt_df, pos_df = replace_in_memory(df_imputed)
-    dep_ndcg = dep_in_memory(dep_df, FEATURE_TYPES)
-    el_ndcg = el_in_memory(el_df, FEATURE_TYPES)
-    mt_ndcg = mt_in_memory(mt_df, FEATURE_TYPES)
-    pos_ndcg = pos_in_memory(pos_df, FEATURE_TYPES)
+    dep_df, el_df, mt_df, pos_df = replace_in_memory(df)
+    dep_ndcg: float = dep_in_memory(dep_df, FEATURE_TYPES)
+    el_ndcg: float = el_in_memory(el_df, FEATURE_TYPES)
+    mt_ndcg: float = mt_in_memory(mt_df, FEATURE_TYPES)
+    pos_ndcg: float = pos_in_memory(pos_df, FEATURE_TYPES)
 
-    results = np.array([dep_ndcg, el_ndcg, mt_ndcg, pos_ndcg])
-    reward: float = np.sum((results - baseline) / baseline)
+    reward: float = float(np.mean([dep_ndcg, el_ndcg, mt_ndcg, pos_ndcg]))
 
     return reward
  
@@ -182,7 +186,7 @@ class Ant:
         self.selected_features: set[int] = set()
 
 
-def choose_feature(ant: Ant, pheromones: np.ndarray, weights: np.ndarray, beta: float = 1.0, mode: str = 'prob') -> int:
+def choose_feature(ant: Ant, pheromones: np.ndarray, weights: np.ndarray, mode: str = 'prob') -> int:
     """
     Choose a feature for the ant to select based on pheromone levels and weights.
     
@@ -191,7 +195,6 @@ def choose_feature(ant: Ant, pheromones: np.ndarray, weights: np.ndarray, beta: 
     - ant: Ant object representing the current ant
     - pheromones: array-like, shape (n_features,)
     - weights: array-like, shape (n_features, n_features)
-    - beta: float, parameter controlling the influence of pheromone levels - default 1.0
     - mode: str, either 'prob' for probabilistic selection or 'greedy' for deterministic selection - default 'prob'
 
     Output
@@ -206,7 +209,7 @@ def choose_feature(ant: Ant, pheromones: np.ndarray, weights: np.ndarray, beta: 
     mask = np.zeros(num_features, dtype=int)
     mask[list(ant.selected_features)] = 1
 
-    logits = pheromones * ((1/(weights[ant.current_feature, :] + EPSILON)) ** beta)
+    logits = pheromones * ((1/(weights[ant.current_feature, :] + EPSILON)) ** BETA)
     logits = np.where(mask == 0, logits, 0)
 
     if mode == 'prob': 
@@ -228,10 +231,12 @@ def select_features_ACO(data: np.ndarray, weights: np.ndarray) -> tuple[np.ndarr
     Inputs
     ------
     - data: array-like, shape (n_languages, n_features)
+    - weights: array-like, shape (n_features, n_features), the similarity matrix between features
 
     Outputs
     -------
-    ndarray of features, ordered by final pheromone levels in descending order.
+    - ndarray of indicies of features, ordered by final pheromone levels in descending order.
+    - ndarray of pheromone levels, ordered by final pheromone levels in descending order.
     """
     num_features = data.shape[1]
 
@@ -251,7 +256,7 @@ def select_features_ACO(data: np.ndarray, weights: np.ndarray) -> tuple[np.ndarr
         for feature_choice in range(FEATURES_PER_ITERATION):
             for ant in ants:
                 mode: str = 'prob' if np.random.rand() > EXPLOITATION_RATE else 'greedy'
-                feature: int = choose_feature(ant, pheromones, weights, BETA, mode)
+                feature: int = choose_feature(ant, pheromones, weights, mode)
                 ant.current_feature = feature
                 ant.selected_features.add(feature)
 
@@ -274,7 +279,7 @@ def select_features_ACO(data: np.ndarray, weights: np.ndarray) -> tuple[np.ndarr
 
  
 # Prepare data
-data: np.ndarray = np.squeeze(uriel.get_typological_data_array())   # No imputation!
+data: np.ndarray = np.squeeze(uriel.get_typological_data_array())
 feature_labels: np.ndarray = uriel.get_typological_features_array()
 languages: np.ndarray = uriel.get_typological_languages_array()
 df = pd.DataFrame(data, columns=feature_labels, index=languages)
@@ -287,8 +292,8 @@ logger.info("Starting feature selection with ACO...")
 ranked_features, pheromones = select_features_ACO(data, weights)
 logger.info("ACO feature selection complete!")
 
-# Impute the selected features and save results
-logger.info("Starting imputation and saving results...")
+# Impute the selected features (if set) and save results
+logger.info("Saving results...")
 for num_features in range(100, 701, 100):
     logger.info(f"Processing {num_features} features...")
     filtered_data: pd.Series = df.iloc[:, ranked_features[:num_features]]
@@ -296,12 +301,14 @@ for num_features in range(100, 701, 100):
     df_np = filtered_data.to_numpy()
     df_np = np.where(df_np == -1, np.nan, df_np)
 
-    imputer = SoftImpute(max_iters=400,  max_value=1, min_value=0, init_fill_method="mean")
-    imputed_values = imputer.fit_transform(df_np)
+    if IMPUTATION:
+        logger.info("Imputing missing values...")
+        imputer = SoftImpute(max_iters=400,  max_value=1, min_value=0, init_fill_method="mean", verbose=False)
+        df_np = imputer.fit_transform(df_np)
 
-    df_imputed = pd.DataFrame(imputed_values, columns=filtered_data.columns, index=filtered_data.index)
-    output_file = f'selection_results/imputed_ant_hueristic_{num_features}.csv'
-    df_imputed.to_csv(output_file)
+    df_final = pd.DataFrame(df_np, columns=filtered_data.columns, index=filtered_data.index)
+    output_file: str = f'selection_results/imputed_ant_hueristic_{num_features}.csv'
+    df_final.to_csv(output_file)
     logger.info(f"Saved: {output_file}")
 
 logger.info("All processing complete!")

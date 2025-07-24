@@ -146,5 +146,3 @@ def dep_in_memory(data: pd.DataFrame, features: list) -> float:
     average_ndcg = np.mean(ndcg_scores)
 
     return average_ndcg * 100
-
-

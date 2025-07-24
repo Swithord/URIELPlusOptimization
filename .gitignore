@@ -1,3 +1,11 @@
 papers/
 selection_result/
+langrank/__pycache__/
+langrank/dep/__pycache__/
+langrank/el/__pycache__/
+langrank/mt/__pycache__/
+langrank/pos/__pycache__/
 uriel_test.ipynb
+temp.ipynb
+ant_old.ipynb
+ant_hueristic.ipynb
