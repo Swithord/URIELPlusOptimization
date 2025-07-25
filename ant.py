@@ -15,6 +15,7 @@ from sklearn.metrics import matthews_corrcoef, normalized_mutual_info_score
 import numpy as np
 import pandas as pd
 import logging
+import os
 
 from fancyimpute import SoftImpute
 from langrank.replace_distances import replace_in_memory
@@ -152,17 +153,15 @@ def compute_pheromones(data: np.ndarray, selected_features: set[int]) -> float:
     FEATURE_TYPES = ['GENETIC','SYNTACTIC','FEATURAL','PHONOLOGICAL','INVENTORY','GEOGRAPHIC']
 
     subset: np.ndarray = data[:, list(selected_features)]
-    subset = np.where(subset == -1, np.nan, subset)
 
     if IMPUTATION:
+        subset = np.where(subset == -1, np.nan, subset)
         imputer = SoftImpute(max_iters=400,  max_value=1, min_value=0, init_fill_method="mean", verbose=False)
         imputed_values = imputer.fit_transform(subset)
 
         df = pd.DataFrame(imputed_values, columns=uriel.get_typological_features_array()[np.array(list(selected_features))], index=uriel.get_typological_languages_array())
     else:
         df = pd.DataFrame(subset, columns=uriel.get_typological_features_array()[np.array(list(selected_features))], index=uriel.get_typological_languages_array())
-
-    # baseline = pd.read_csv('data/baseline_results_imputed.csv').to_numpy().squeeze()
 
     dep_df, el_df, mt_df, pos_df = replace_in_memory(df)
     dep_ndcg: float = dep_in_memory(dep_df, FEATURE_TYPES)
@@ -292,16 +291,22 @@ logger.info("Starting feature selection with ACO...")
 ranked_features, pheromones = select_features_ACO(data, weights)
 logger.info("ACO feature selection complete!")
 
-# Impute the selected features (if set) and save results
+# Save results
 logger.info("Saving results...")
 for num_features in range(100, 701, 100):
     logger.info(f"Processing {num_features} features...")
     filtered_data: pd.Series = df.iloc[:, ranked_features[:num_features]]
 
     df_np = filtered_data.to_numpy()
-    df_np = np.where(df_np == -1, np.nan, df_np)
     
     df_final = pd.DataFrame(df_np, columns=filtered_data.columns, index=filtered_data.index)
+
+    if not os.path.exists('selection_result'):
+        os.makedirs('selection_result')
+
+    if not os.path.exists('eval_result'):
+        os.makedirs('eval_result')
+
     df_final.to_csv(f'selection_result/ant_{SIMILARITY_FUNCTION}_{num_features}.csv')
     logger.info(f"Saved: {f'selection_result/ant_{SIMILARITY_FUNCTION}_{num_features}.csv'}")
 
