@@ -1,13 +1,13 @@
 NUM_ANTS = 25                   # number of ants in the colony (i hate ants!!!!)
 EVAPORATION = 0.2               # how much pheromone evaporates each iteration
-ITERATIONS = 50                 # number of iterations to run the algorithm
+ITERATIONS = 00                 # number of iterations to run the algorithm
 FEATURES_PER_ITERATION = 200    # number of features to select per iteration
 BETA = 0.5                      # weight given for similarity vs pheromone (beta > 1, the heuristic dominates)
 EXPLOITATION_RATE = 0.8         # how much to exploit vs explore
 EPSILON = 0.00001               # Stop division by zero errors
 SIMILARITY_FUNCTION = 'phi'     # similarity function to use, 'phi' or 'mi'
 SAVE_PHEROMONES = True          # whether to save pheromone matrix after each iteration
-LOAD_PHEROMONES = False         # whether to load existing pheromone matrix to resume
+LOAD_PHEROMONES = True         # whether to load existing pheromone matrix to resume
 from config import IMPUTATION   # whether to use imputed values
 
 from urielplus import urielplus
@@ -298,6 +298,7 @@ for num_features in range(100, 701, 100):
     filtered_data: pd.Series = df.iloc[:, ranked_features[:num_features]]
 
     df_np = filtered_data.to_numpy()
+    df_np = np.where(df_np == -1, np.nan, df_np)
     
     df_final = pd.DataFrame(df_np, columns=filtered_data.columns, index=filtered_data.index)
 
