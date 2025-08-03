@@ -1,13 +1,13 @@
 NUM_ANTS = 25                   # number of ants in the colony (i hate ants!!!!)
 EVAPORATION = 0.2               # how much pheromone evaporates each iteration
-ITERATIONS = 00                 # number of iterations to run the algorithm
+ITERATIONS = 200                # number of iterations to run the algorithm
 FEATURES_PER_ITERATION = 200    # number of features to select per iteration
 BETA = 0.5                      # weight given for similarity vs pheromone (beta > 1, the heuristic dominates)
 EXPLOITATION_RATE = 0.8         # how much to exploit vs explore
 EPSILON = 0.00001               # Stop division by zero errors
 SIMILARITY_FUNCTION = 'phi'     # similarity function to use, 'phi' or 'mi'
 SAVE_PHEROMONES = True          # whether to save pheromone matrix after each iteration
-LOAD_PHEROMONES = True         # whether to load existing pheromone matrix to resume
+LOAD_PHEROMONES = False         # whether to load existing pheromone matrix to resume
 from config import IMPUTATION   # whether to use imputed values
 
 from urielplus import urielplus
@@ -16,13 +16,9 @@ import numpy as np
 import pandas as pd
 import logging
 import os
-
 from fancyimpute import SoftImpute
-from langrank.replace_distances import replace_in_memory
-from langrank.dep.dep import dep_in_memory
-from langrank.el.el import el_in_memory
-from langrank.mt.mt import mt_in_memory
-from langrank.pos.pos import pos_in_memory
+
+from langrank import *
 
 
 # cursor said this shuts up SoftImpute
@@ -31,7 +27,6 @@ warnings.filterwarnings("ignore", category=FutureWarning, message="'force_all_fi
 
 # shut up LightGBM
 warnings.filterwarnings('ignore', category=UserWarning, module='lightgbm')
-
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -144,18 +139,25 @@ def compute_pheromones(data: np.ndarray, selected_features: set[int]) -> float:
     Input
     -----
     - data: array-like, shape (n_samples, n_features), the full URIEL dataset before feature selection
-    - subset: set of feature indices that are selected
+    - selected_features: set of feature indices that are selected
 
     Output
     ------
     - loss: float, the loss value computed from the LangRank results
     """
-    FEATURE_TYPES = ['GENETIC','SYNTACTIC','FEATURAL','PHONOLOGICAL','INVENTORY','GEOGRAPHIC']
+    FEATURE_TYPES = ['syntactic', 'inventory', 'phonological', 'featural', 'morphological']
+    TASKS = {   # Bool is to indicate whether the dataset is in ISO and needs to be converted to glottocode
+        'mt': ('BLEU', True),
+        'dep': ('accuracy', True),
+        'el': ('accuracy', True),
+        'pos': ('accuracy', True),
+        'taxi1500': ('f1_score', False),
+    }
 
     subset: np.ndarray = data[:, list(selected_features)]
+    subset = np.where(subset == -1, np.nan, subset)
 
     if IMPUTATION:
-        subset = np.where(subset == -1, np.nan, subset)
         imputer = SoftImpute(max_iters=400,  max_value=1, min_value=0, init_fill_method="mean", verbose=False)
         imputed_values = imputer.fit_transform(subset)
 
@@ -163,13 +165,39 @@ def compute_pheromones(data: np.ndarray, selected_features: set[int]) -> float:
     else:
         df = pd.DataFrame(subset, columns=uriel.get_typological_features_array()[np.array(list(selected_features))], index=uriel.get_typological_languages_array())
 
-    dep_df, el_df, mt_df, pos_df = replace_in_memory(df)
-    dep_ndcg: float = dep_in_memory(dep_df, FEATURE_TYPES)
-    el_ndcg: float = el_in_memory(el_df, FEATURE_TYPES)
-    mt_ndcg: float = mt_in_memory(mt_df, FEATURE_TYPES)
-    pos_ndcg: float = pos_in_memory(pos_df, FEATURE_TYPES)
+    # baseline = pd.read_csv('data/baseline_results_imputed.csv').to_numpy().squeeze()
 
-    reward: float = float(np.mean([dep_ndcg, el_ndcg, mt_ndcg, pos_ndcg]))
+    # Create calculators using the data
+    calculators: dict[str, DistanceCalculator] = {
+        'syntactic': create_syntactic_calculator(df),
+        'morphological': create_morphological_calculator(df),
+        'inventory': create_inventory_calculator(df),
+        'phonological': create_phonological_calculator(df),
+        'featural': create_featural_calculator(df)
+    }
+
+    evaluator = LangRankEvaluator(
+        calculators = calculators,
+        iso_map_file = 'data/code_mapping.csv'
+    )
+
+    eval_results = np.zeros(len(TASKS))
+    for i, task in enumerate(TASKS):
+        df = evaluator.replace_distances(
+            dataset_path = f'data/{task}.csv',
+            distance_types = FEATURE_TYPES, 
+            iso_conversion = TASKS[task][1]
+        )
+        
+        score = evaluator.evaluate(
+            data = df,
+            features = FEATURE_TYPES + ['geographic', 'genetic'],
+            performance_col_name = TASKS[task][0],
+        )
+        
+        eval_results[i] = score
+
+    reward: float = float(np.mean(eval_results))
 
     return reward
  
