@@ -152,7 +152,13 @@ def compute_pheromones(data: np.ndarray, selected_features: set[int]) -> float:
         'el': ('accuracy', True),
         'pos': ('accuracy', True),
         'taxi1500': ('f1_score', False),
+        'xnli': ('accuracy', False),
     }
+
+    script_df = pd.read_csv('data/URIEL_Script.csv', index_col=0)
+    islands_df = pd.read_csv('data/URIELPlus_Union_Imputed.csv', index_col=0)
+    phylogeny_df = pd.read_csv('data/URIEL_Phylogeny.csv', index_col=0)
+    geography_df = pd.read_csv('data/URIEL_Geography.csv', index_col=0)
 
     subset: np.ndarray = data[:, list(selected_features)]
     subset = np.where(subset == -1, np.nan, subset)
@@ -169,11 +175,17 @@ def compute_pheromones(data: np.ndarray, selected_features: set[int]) -> float:
 
     # Create calculators using the data
     calculators: dict[str, DistanceCalculator] = {
-        'syntactic': create_syntactic_calculator(df),
-        'morphological': create_morphological_calculator(df),
-        'inventory': create_inventory_calculator(df),
-        'phonological': create_phonological_calculator(df),
-        'featural': create_featural_calculator(df)
+        'syntactic': SyntacticCalculator(df),
+        'morphological': MorphologicalCalculator(df),
+        'inventory': InventoryCalculator(df),
+        'phonological': PhonologicalCalculator(df),
+        'featural': FeaturalCalculator(df),
+
+        'scriptural': GenericCalculator(script_df),
+        'islands': IslandCalculator(islands_df),
+        'new_geographic': GeographicCalculator(1),
+        'geographic': GenericCalculator(geography_df),
+        'genetic': GenericCalculator(phylogeny_df)
     }
 
     evaluator = LangRankEvaluator(
@@ -184,18 +196,18 @@ def compute_pheromones(data: np.ndarray, selected_features: set[int]) -> float:
     eval_results = np.zeros(len(TASKS))
     for i, task in enumerate(TASKS):
         df = evaluator.replace_distances(
-            dataset_path = f'data/{task}.csv',
+            data_file = f'data/{task}.csv',
             distance_types = FEATURE_TYPES, 
             iso_conversion = TASKS[task][1]
         )
         
         score = evaluator.evaluate(
             data = df,
-            features = FEATURE_TYPES + ['geographic', 'genetic'],
+            features = FEATURE_TYPES,
             performance_col_name = TASKS[task][0],
         )
         
-        eval_results[i] = score
+        eval_results[i] = score[0]
 
     reward: float = float(np.mean(eval_results))
 
